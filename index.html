@@ -219,6 +219,246 @@ function updateMap() {
   '&width=650&height=450&zoom=7&level=surface&overlay=radar&product=radar&menu=&message=true&marker=true&calendar=now&pressure=true&type=map&location=coordinates"></iframe>';
  mapInitialized=true;
 }
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NWS Weather Live</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #09233d;
+            color: white;
+        }
+        header {
+            background: #03182b;
+            padding: 18px;
+            text-align: center;
+            position: relative;
+        }
+        .stats-badge {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(16, 47, 74, 0.9);
+            border: 1px solid #287aa5;
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-size: 12px;
+            text-align: right;
+            line-height: 1.4;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+        }
+        @media (max-width: 600px) {
+            .stats-badge {
+                position: static;
+                margin: 10px auto 0 auto;
+                text-align: center;
+                display: inline-block;
+            }
+        }
+        main {
+            padding: 14px;
+            max-width: 1200px;
+            margin: auto;
+        }
+        .panel {
+            background: #102f4a;
+            border: 1px solid #287aa5;
+            border-radius: 10px;
+            padding: 15px;
+            margin: 12px 0;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 12px;
+        }
+        .big {
+            font-size: 40px;
+            font-weight: bold;
+        }
+        .alert {
+            background: #861b2a;
+            padding: 15px;
+            border-radius: 8px;
+        }
+        .muted {
+            color: #c7d9ec;
+        }
+        iframe {
+            width: 100%;
+            height: 400px;
+            border: 0;
+            border-radius: 8px;
+        }
+        a {
+            color: #8bd4ff;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <!-- Counters Box in the top right corner -->
+        <div class="stats-badge">
+            🟢 Active Now: <span id="active-users">Loading...</span><br>
+            👥 Total Visits: <span id="total-visits">Loading...</span>
+        </div>
+
+        <h1>📡 NWS Weather Live</h1>
+        <p>Live U.S. weather dashboard</p>
+        <span id="place">Helena, MT</span><br><br>
+        <button onclick="gps()">📍 Use my location</button>
+        <button onclick="chooseLocation()">🏙️ Enter coordinates</button>
+        <button onclick="loadWeather()">🔄 Refresh Weather</button>
+    </header>
+
+    <main>
+        <div id="topAlert" class="alert">Checking active weather alerts...</div>
+        
+        <div class="grid">
+            <section class="panel">
+                <h2>Current Conditions</h2>
+                <div id="current">Loading...</div>
+                <div id="metrics"></div>
+                <p id="updated" class="muted"></p>
+            </section>
+
+            <section class="panel">
+                <h2>⚠️ Active Alerts</h2>
+                <div id="alerts">Loading alerts...</div>
+            </section>
+        </div>
+
+        <section class="panel">
+            <h2>🗺️ NWS Radar</h2>
+            <iframe title="Official NWS radar" src="https://weather.gov"></iframe>
+            <a href="https://weather.gov" target="_blank" rel="noopener">Open full radar ↗</a>
+        </section>
+
+        <section class="panel">
+            <h2>🔮 Forecast</h2>
+            <div id="forecast">Loading forecast...</div>
+        </section>
+
+        <section class="panel">
+            <h2>🌪️ Storm Information</h2>
+            <p>🛰️ Storm Prediction Center: <a href="https://noaa.gov" target="_blank" rel="noopener">Severe weather outlooks</a></p>
+            <p>🗽 National Weather Service: <a href="https://weather.gov" target="_blank" rel="noopener">Official weather information</a></p>
+            <p class="muted">This page does not calculate its own storm probabilities.</p>
+        </section>
+
+        <p id="status" class="muted">Connecting to NWS...</p>
+        <p class="muted">Data from the National Weather Service API. Independent project, not an official NWS product.</p>
+    </main>
+
+    <script>
+        let lat = 46.5927;
+        let lon = -112.0361;
+
+        // Helper to convert wind degrees to directional letters (e.g. 180° -> S)
+        function getWindDirectionCard(degrees) {
+            if (degrees === null || degrees === undefined) return "N/A";
+            const directions = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+            const val = Math.floor((degrees / 22.5) + 0.5);
+            return directions[(val % 16)];
+        }
+
+        async function api(url) {
+            const r = await fetch(url, { headers: { "Accept": "application/geo+json" } });
+            if (!r.ok) throw new Error("Weather API error " + r.status);
+            return r.json();
+        }
+
+        async function loadWeather() {
+            document.getElementById('status').innerText = "Fetching weather...";
+            try {
+                // Get the grid points and station info for coordinates
+                const points = await api(`https://weather.gov{lat},${lon}`);
+                const properties = points.properties;
+                
+                // Set the location name text
+                const city = properties.relativeLocation.properties.city;
+                const state = properties.relativeLocation.properties.state;
+                document.getElementById('place').innerText = `${city}, ${state}`;
+
+                // Fetch forecast data and current alert context data
+                const forecastData = await api(properties.forecast);
+                const alertData = await api(`https://weather.gov{lat},${lon}`);
+                
+                // Fetch direct current observation station data to get real-time wind speed, direction, and gusts
+                const stationsData = await api(properties.observationStations);
+                let currentObservation = null;
+                
+                if (stationsData.features && stationsData.features.length > 0) {
+                    const latestObsUrl = `${stationsData.features[0].id}/observations/latest`;
+                    try {
+                        const obsData = await api(latestObsUrl);
+                        currentObservation = obsData.properties;
+                    } catch(e) {
+                        console.log("Could not catch live station metrics, falling back to forecast descriptions.");
+                    }
+                }
+
+                // Update Forecast HTML Grid
+                let forecastHtml = '<div class="grid">';
+                const periods = forecastData.properties.periods.slice(0, 4);
+                periods.forEach(p => {
+                    forecastHtml += `
+                        <div style="background:#0d253c; padding:10px; border-radius:6px; border:1px solid #1f4e75;">
+                            <strong>${p.name}</strong><br>
+                            <span class="big">${p.temperature}°${p.temperatureUnit}</span><br>
+                            <small>${p.shortForecast}</small>
+                        </div>`;
+                });
+                forecastHtml += '</div>';
+                document.getElementById('forecast').innerHTML = forecastHtml;
+
+                // Process Wind Direction, Speed, and Gusts cleanly
+                let speedText = "0 mph";
+                let gustText = "None";
+                let dirText = "Calm";
+
+                if (currentObservation) {
+                    const rawSpeed = currentObservation.windSpeed.value; // returns km/h from API
+                    const rawGust = currentObservation.windGust.value;
+                    const rawDir = currentObservation.windDirection.value;
+
+                    if (rawSpeed > 0) {
+                        speedText = `${Math.round(rawSpeed * 0.621371)} mph`;
+                        dirText = getWindDirectionCard(rawDir);
+                    }
+                    if (rawGust > 0) {
+                        gustText = `${Math.round(rawGust * 0.621371)} mph`;
+                    }
+                } else if (periods.length > 0) {
+                    speedText = periods[0].windSpeed;
+                    dirText = periods[0].windDirection || "Variable";
+                }
+
+                // Update Current Conditions Layout
+                if (periods.length > 0) {
+                    document.getElementById('current').innerHTML = `<span class="big">${periods[0].temperature}°${periods[0].temperatureUnit}</span><br>${periods[0].shortForecast}`;
+                    document.getElementById('metrics').innerHTML = `
+                        💨 <b>Wind Speed:</b> ${speedText}<br>
+                        🧭 <b>Wind Direction:</b> ${dirText}<br>
+                        🌪️ <b>Wind Gusts:</b> ${gustText}
+                    `;
+                    document.getElementById('updated').innerText = `Last updated: ${new Date().toLocaleTimeString()}`;
+                }
+
+                // Update Alerts HTML banner configurations
+                if (alertData.features && alertData.features.length > 0) {
+                    let alertHtml = '';
+                    alertData.features.forEach(f => {
+                        alertHtml += `<div style="color:#ff6b6b; margin-bottom:10px;"><strong>⚠️ ${f.properties.event}</strong><br><small>${f.properties.headline}</small></div>`;
+                    });
+                    document.getElementById('alerts').innerHTML = alertHtml;
+                    document.getElementById('topAlert').innerText = `⚠️ Active Alerts in the area! Check the panel below.`;
+                    document.getElementById('topAlert').style.display = 'block';
+                } else {
 
 function setupCommunityCounters() {
  // These must come from a real shared backend.
