@@ -142,3 +142,114 @@ setInterval(loadWeather,300000);
 </script>
 </body>
 </html>
+>${esc(p.description||"No additional details provided").slice(0,5000)}</p>
+     <p><b>Instructions:</b> ${esc(p.instruction||"Follow official local emergency guidance.")}</p>
+     <p>Effective: ${esc(p.effective||"Not specified")}</p>
+     <p>Expires: ${esc(p.expires||"Not specified")}</p>
+     <p><a href="${esc(f.id||"https://www.weather.gov/")}" target="_blank" rel="noopener">View official alert</a></p>
+    </details>
+   </div>`;
+  }).join("");
+ } catch(e) {
+  $("alertStatus").textContent = "Unable to retrieve NWS alerts: "+e.message;
+  $("alerts").innerHTML =
+   '<div class="alert">The alert service could not be reached. Check your internet connection and visit <a href="https://www.weather.gov/" target="_blank" rel="noopener">weather.gov</a>.</div>';
+ } finally {
+  alertsBusy = false;
+ }
+}
+
+async function searchLocation() {
+ const q=$("placeInput").value.trim();
+ if(!q) {
+  setStatus("Enter a city, region, or postal code.");
+  return;
+ }
+ setStatus("Searching for "+q+"…");
+ try {
+  const p=await geocode(q);
+  setLocation(p);
+ } catch(e) {
+  setStatus(e.message);
+ }
+}
+
+function useGPS() {
+ if(!navigator.geolocation) {
+  setStatus("Location sharing is not supported by this browser.");
+  return;
+ }
+ setStatus("Requesting your location permission…");
+ navigator.geolocation.getCurrentPosition(async pos=>{
+  try {
+   lat=pos.coords.latitude;
+   lon=pos.coords.longitude;
+   let name="Your shared location";
+   try {
+    const d=await getJSON(
+     "https://geocoding-api.open-meteo.com/v1/reverse?latitude="+lat+
+     "&longitude="+lon+"&language=en&format=json"
+    );
+    if(d.results?.length) {
+     const r=d.results[0];
+     name=[r.name,r.admin1,r.country].filter(Boolean).join(", ");
+    }
+   } catch(_) {}
+   setLocation({lat,lon,place:name});
+  } catch(e) {
+   setStatus("Could not load location weather: "+e.message);
+  }
+ },err=>{
+  setStatus("Location permission unavailable: "+err.message+
+   ". You can search for a city instead.");
+ },{enableHighAccuracy:true,timeout:15000,maximumAge:60000});
+}
+
+function updateMap() {
+ const box=$("map");
+ const bbox=[
+  lon-0.8,lat-0.5,lon+0.8,lat+0.5
+ ].join("%2C");
+ const marker=lat+"%2C"+lon;
+ box.innerHTML=
+  '<iframe title="Interactive weather map" loading="lazy" '+
+  'referrerpolicy="no-referrer-when-downgrade" '+
+  'src="https://embed.windy.com/embed2.html?lat='+lat+
+  '&lon='+lon+'&detailLat='+lat+'&detailLon='+lon+
+  '&width=650&height=450&zoom=7&level=surface&overlay=radar&product=radar&menu=&message=true&marker=true&calendar=now&pressure=true&type=map&location=coordinates"></iframe>';
+ mapInitialized=true;
+}
+
+function setupCommunityCounters() {
+ // These must come from a real shared backend.
+ // Do not display random numbers as real people or members.
+ $("online").textContent="Backend needed";
+ $("members").textContent="Backend needed";
+ $("online").title="Connect a shared server/database to count active visitors.";
+ $("members").title="Connect a shared member database to count registered members.";
+}
+
+$("search").addEventListener("click",searchLocation);
+$("placeInput").addEventListener("keydown",e=>{
+ if(e.key==="Enter") searchLocation();
+});
+$("gps").addEventListener("click",useGPS);
+$("refresh").addEventListener("click",loadAll);
+$("refreshAlerts").addEventListener("click",loadAlerts);
+
+function loadAll() {
+ loadWeather();
+ loadAlerts();
+}
+
+setupCommunityCounters();
+updateMap();
+loadAll();
+
+// Recheck regularly. Providers may not publish new data every minute.
+setInterval(loadWeather,60000);
+setInterval(loadAlerts,60000);
+
+</script>
+</body>
+</html>
